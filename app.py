@@ -8,7 +8,7 @@ st.set_page_config(page_title="WealthFlow Pro", layout="wide")
 
 # 2. 구글 시트 연결
 # (Secrets에 [connections.gsheets] 설정이 정확해야 합니다)
-conn = st.connection("gsheets", type=GSheetsConnection)
+conn = st.connection("gsheets", type=GSheetsConnection, spreadsheet="https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit")
 
 # 3. 사이드바 설정
 st.sidebar.title("💎 WealthFlow Pro")
@@ -104,3 +104,4 @@ st.divider()
 # 6. 내역 보기
 st.subheader("📑 최근 내역")
 st.dataframe(df.sort_values("날짜", ascending=False), use_container_width=True)
+
