@@ -2,13 +2,26 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from streamlit_gsheets import GSheetsConnection
+import json
 
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Pro", layout="wide")
 
-# 2. 구글 시트 연결
-conn = st.connection("gsheets", type=GSheetsConnection, connection_name="gsheets")
-
+# 2. 구글 시트 연결 (가장 확실한 직접 주입 방식)
+try:
+    # 시크릿에서 JSON 문자열을 가져와 딕셔너리로 변환
+    creds_dict = json.loads(st.secrets["connections"]["gsheets"]["service_account"])
+    
+    # 연결 생성 (인증 정보를 직접 꽂아줍니다)
+    conn = st.connection(
+        "gsheets", 
+        type=GSheetsConnection, 
+        service_account=creds_dict
+    )
+except Exception as auth_error:
+    st.error(f"인증 정보 로드 실패: {auth_error}")
+    st.stop()
+    
 # 3. 사이드바 설정
 st.sidebar.title("💎 WealthFlow Pro")
 user_input = st.sidebar.text_input("접속 아이디", value="").strip().lower()
@@ -94,6 +107,7 @@ if not df.empty:
     st.dataframe(df.sort_values("날짜", ascending=False), use_container_width=True)
 else:
     st.info("기록된 데이터가 없습니다.")
+
 
 
 
