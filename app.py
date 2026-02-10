@@ -4,24 +4,20 @@ from datetime import date
 import gspread
 from google.oauth2.service_account import Credentials
 import json
+import plotly.express as px # 그래프를 위해 추가
 
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Pro", layout="wide")
 
-# 2. 구글 시트 직접 연결 설정 (gspread 방식)
+# 2. 구글 시트 연결 설정
 def get_gspread_client():
-    # Secrets에서 인증 정보 로드
     creds_info = json.loads(st.secrets["connections"]["gsheets"]["service_account"])
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
 
 try:
     client = get_gspread_client()
-    # Secrets에 저장된 시트 ID (URL 전체가 아닌 ID값)
     spreadsheet_id = st.secrets["connections"]["gsheets"]["spreadsheet"]
     sh = client.open_by_key(spreadsheet_id)
 except Exception as e:
@@ -46,10 +42,12 @@ def load_data(ws_name):
     try:
         ws = sh.worksheet(ws_name)
         data = ws.get_all_records()
-        return pd.DataFrame(data), ws
+        df = pd.DataFrame(data)
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date'])
+            df['amount'] = pd.to_numeric(df['amount'])
+        return df, ws
     except Exception as e:
-        # 워크시트가 없으면 생성하거나 에러 처리
-        st.error(f"데이터 로드 에러: {e}")
         return pd.DataFrame(columns=["date", "category", "item", "amount", "memo"]), None
 
 df, worksheet = load_data(target_worksheet_name)
@@ -57,28 +55,64 @@ df, worksheet = load_data(target_worksheet_name)
 # 5. 메인 화면 및 입력 폼
 st.title(f"📊 {user_input.upper()}님 대시보드")
 
-with st.form("add_form", clear_on_submit=True):
-    col1, col2, col3 = st.columns(3)
-    d = col1.date_input("날짜", value=date.today())
-    g = col2.selectbox("구분", ["수익", "지출", "저축-적금", "저축-투자"])
-    i = col3.text_input("항목")
-    a = st.number_input("금액", min_value=0, step=1000)
-    m = st.text_input("메모")
-    submit = st.form_submit_button("장부에 기록", use_container_width=True)
+with st.expander("➕ 새로운 내역 기록하기", expanded=True):
+    with st.form("add_form", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        d = col1.date_input("날짜", value=date.today())
+        g = col2.selectbox("구분", ["수익", "지출", "저축-적금", "저축-투자"])
+        i = col3.text_input("항목")
+        
+        col4, col5 = st.columns([1, 2])
+        a = col4.number_input("금액", min_value=0, step=1000)
+        m = col5.text_input("메모")
+        submit = st.form_submit_button("장부에 기록", use_container_width=True)
 
-    if submit and worksheet:
-        try:
-            # gspread는 행을 직접 추가할 수 있어 400 에러에서 자유롭습니다.
-            new_data = [str(d), g, i, int(a), m]
-            worksheet.append_row(new_data)
-            st.success("✅ 저장 완료!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"저장 실패: {e}")
+        if submit and worksheet:
+            try:
+                new_data = [str(d), g, i, int(a), m]
+                worksheet.append_row(new_data)
+                st.success("✅ 저장 완료!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"저장 실패: {e}")
 
 st.divider()
-st.subheader("📑 최근 내역")
+
+# 6. 통계 분석 섹션
 if not df.empty:
-    st.dataframe(df.sort_index(ascending=False), use_container_width=True)
+    col_left, col_right = st.columns(2)
+
+    # A. 날짜별 지출 총액 (막대 그래프)
+    with col_left:
+        st.subheader("📅 날짜별 지출 합계")
+        # '지출' 항목만 필터링
+        expense_df = df[df['category'] == '지출'].copy()
+        if not expense_df.empty:
+            daily_expense = expense_df.groupby('date')['amount'].sum().reset_index()
+            fig_bar = px.bar(daily_expense, x='date', y='amount', 
+                             labels={'amount':'지출 금액', 'date':'날짜'},
+                             color_discrete_sequence=['#FF4B4B'])
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("지출 내역이 없습니다.")
+
+    # B. 항목별 지출 비율 (원그래프)
+    with col_right:
+        st.subheader("🍕 항목별 지출 비율")
+        if not expense_df.empty:
+            item_expense = expense_df.groupby('item')['amount'].sum().reset_index()
+            fig_pie = px.pie(item_expense, values='amount', names='item', 
+                             hole=0.4, # 도넛 모양
+                             color_discrete_sequence=px.colors.sequential.RdBu)
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("분석할 지출 내역이 없습니다.")
+
+    st.divider()
+
+    # 7. 전체 내역 표
+    st.subheader("📑 상세 내역 리스트")
+    # 최신순 정렬을 위해 날짜 기준 내림차순
+    st.dataframe(df.sort_values('date', ascending=False), use_container_width=True)
 else:
-    st.write("데이터가 없습니다.")
+    st.info("기록된 데이터가 아직 없습니다. 첫 내역을 입력해 보세요!")
