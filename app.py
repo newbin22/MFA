@@ -1,44 +1,58 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
+import json
 
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Pro", layout="wide")
 
-# 2. 구글 시트 연결
-conn = st.connection("gsheets", type=GSheetsConnection)
+# 2. 구글 시트 직접 연결 설정 (gspread 방식)
+def get_gspread_client():
+    # Secrets에서 인증 정보 로드
+    creds_info = json.loads(st.secrets["connections"]["gsheets"]["service_account"])
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    return gspread.authorize(creds)
 
-# 3. 사이드바 설정
+try:
+    client = get_gspread_client()
+    # Secrets에 저장된 시트 ID (URL 전체가 아닌 ID값)
+    spreadsheet_id = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    sh = client.open_by_key(spreadsheet_id)
+except Exception as e:
+    st.error(f"구글 시트 연결 실패: {e}")
+    st.stop()
+
+# 3. 사이드바 및 사용자 설정
 st.sidebar.title("💎 WealthFlow Pro")
 user_input = st.sidebar.text_input("접속 아이디", value="").strip().lower()
 
-user_mapping = {
-    "newbin": "newbin", 
-    "sheet2": "sheet2",
-    "sheet3": "sheet3"
-}
+user_mapping = {"newbin": "newbin", "sheet2": "sheet2"}
 
 if not user_input or user_input not in user_mapping:
     st.title("💰 자산관리 시스템")
     st.info("왼쪽 사이드바에 아이디를 입력해주세요.")
     st.stop()
 
-target_worksheet = user_mapping[user_input]
+target_worksheet_name = user_mapping[user_input]
 
-# 4. 데이터 로드
-try:
-    # 400 에러 방지를 위해 worksheet를 명시하고 캐시를 초기화(ttl=0)합니다.
-    df = conn.read(worksheet=target_worksheet, ttl=0)
-    
-    # 만약 시트가 비어있어 None이 반환되면 구조를 잡아줍니다.
-    if df is None or df.empty:
-        df = pd.DataFrame(columns=["date", "category", "item", "amount", "memo"])
-except Exception as e:
-    st.error(f"데이터 로드 실패 (HTTP 400 가능성)")
-    st.info("시트의 1행이 [date, category, item, amount, memo] 인지 확인하세요.")
-    st.code(str(e))
-    st.stop()
+# 4. 데이터 로드 및 저장 함수
+def load_data(ws_name):
+    try:
+        ws = sh.worksheet(ws_name)
+        data = ws.get_all_records()
+        return pd.DataFrame(data), ws
+    except Exception as e:
+        # 워크시트가 없으면 생성하거나 에러 처리
+        st.error(f"데이터 로드 에러: {e}")
+        return pd.DataFrame(columns=["date", "category", "item", "amount", "memo"]), None
+
+df, worksheet = load_data(target_worksheet_name)
 
 # 5. 메인 화면 및 입력 폼
 st.title(f"📊 {user_input.upper()}님 대시보드")
@@ -48,46 +62,23 @@ with st.form("add_form", clear_on_submit=True):
     d = col1.date_input("날짜", value=date.today())
     g = col2.selectbox("구분", ["수익", "지출", "저축-적금", "저축-투자"])
     i = col3.text_input("항목")
-    
-    col4, col5 = st.columns([1, 2])
-    a = col4.number_input("금액", min_value=0, step=1000)
-    memo = col5.text_input("메모")
-    
+    a = st.number_input("금액", min_value=0, step=1000)
+    m = st.text_input("메모")
     submit = st.form_submit_button("장부에 기록", use_container_width=True)
 
-    if submit:
-        if not i or a <= 0:
-            st.warning("항목과 금액을 정확히 입력해주세요.")
-        else:
-            try:
-                # 새 행 생성 (영어 컬럼명에 맞춤)
-                new_row = pd.DataFrame([{
-                    "date": str(d),
-                    "category": str(g),
-                    "item": str(i),
-                    "amount": int(a),
-                    "memo": str(memo)
-                }])
-                
-                # 기존 데이터와 결합
-                # 데이터가 완전히 비어있을 때를 대비해 모든 컬럼 타입을 맞춥니다.
-                df_to_update = pd.concat([df, new_row], ignore_index=True)
-                
-                # 구글 시트 업데이트
-                conn.update(worksheet=target_worksheet, data=df_to_update)
-                
-                st.success("✅ 저장 완료!")
-                st.rerun()
-            except Exception as save_error:
-                st.error("⚠️ 저장 실패 (400 Bad Request)")
-                st.code(str(save_error))
+    if submit and worksheet:
+        try:
+            # gspread는 행을 직접 추가할 수 있어 400 에러에서 자유롭습니다.
+            new_data = [str(d), g, i, int(a), m]
+            worksheet.append_row(new_data)
+            st.success("✅ 저장 완료!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"저장 실패: {e}")
 
 st.divider()
 st.subheader("📑 최근 내역")
 if not df.empty:
-    # 화면 표시용으로만 컬럼명을 다시 한글로 보여줄 수 있습니다.
-    display_df = df.copy()
-    display_df.columns = ["날짜", "구분", "항목", "금액", "메모"]
-    st.dataframe(display_df.sort_values("날짜", ascending=False), use_container_width=True)
+    st.dataframe(df.sort_index(ascending=False), use_container_width=True)
 else:
     st.write("데이터가 없습니다.")
