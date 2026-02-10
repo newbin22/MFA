@@ -7,22 +7,21 @@ from streamlit_gsheets import GSheetsConnection
 # 1. 페이지 설정
 st.set_page_config(page_title="My WealthFlow", layout="wide")
 
-# 2. 구글 시트 연결 (URL 확인)
+# 2. 구글 시트 연결
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
-MY_TAB = "newbin" # 내가 사용할 탭 이름 고정
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 3. 데이터 로드 (캐시 없이 실시간 로드)
+# 3. 데이터 로드 (worksheet 인자를 아예 빼서 첫 번째 탭을 강제 로드)
 try:
-    df = conn.read(spreadsheet=SHEET_URL, worksheet=MY_TAB, ttl=0)
+    # worksheet를 지정하지 않으면 구글 시트의 맨 왼쪽 첫 번째 탭을 읽어옵니다.
+    df = conn.read(spreadsheet=SHEET_URL, ttl=0)
     
-    # 데이터가 비어있거나 헤더가 없을 경우 대비
     if df is None or df.empty:
         df = pd.DataFrame(columns=["날짜", "구분", "항목", "금액", "메모"])
 except Exception as e:
-    st.error(f"구글 시트의 '{MY_TAB}' 탭을 읽어올 수 없습니다.")
-    st.info("구글 시트에 'newbin' 탭이 있는지, 첫 줄에 제목이 있는지 확인해주세요.")
+    st.error("구글 시트를 불러오는 데 실패했습니다.")
+    st.info("공유 설정이 '편집자'로 되어 있는지 다시 한번 확인해주세요.")
     st.stop()
 
 # 데이터 전처리
@@ -63,17 +62,16 @@ with col_in:
         if submit and i and a > 0:
             new_row = pd.DataFrame([{"날짜": d.strftime("%Y-%m-%d"), "구분": g, "항목": i, "금액": a, "메모": memo}])
             updated_df = pd.concat([df, new_row], ignore_index=True)
-            # 즉시 업데이트
-            conn.update(spreadsheet=SHEET_URL, worksheet=MY_TAB, data=updated_df)
-            st.success("성공적으로 기록되었습니다!")
+            # 업데이트 시에도 worksheet를 빼거나 0번 인덱스를 사용
+            conn.update(spreadsheet=SHEET_URL, data=updated_df)
+            st.success("기록되었습니다!")
             st.rerun()
 
 with col_view:
     st.subheader("📑 전체 내역")
-    # 표에서 직접 수정 가능하도록 설정
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
     if st.button("💾 변경사항 전체 저장", use_container_width=True):
-        conn.update(spreadsheet=SHEET_URL, worksheet=MY_TAB, data=edited_df)
+        conn.update(spreadsheet=SHEET_URL, data=edited_df)
         st.success("시트와 동기화되었습니다!")
         st.rerun()
 
@@ -82,7 +80,5 @@ st.divider()
 st.subheader("📈 지출 분포")
 exp_df = df[df["구분"] == "지출"]
 if not exp_df.empty:
-    fig = px.pie(exp_df, values="금액", names="항목", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+    fig = px.pie(exp_df, values="금액", names="항목", hole=0.4)
     st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("아직 지출 내역이 없습니다.")
