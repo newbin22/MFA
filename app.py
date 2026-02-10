@@ -8,7 +8,7 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="WealthFlow Shared", layout="wide")
 
 # 2. 구글 시트 연결
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit?gid=0#gid=0"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 3. 사이드바 로그인 (단순 아이디 방식)
@@ -85,4 +85,5 @@ st.subheader("📈 지출 분포")
 if not df[df["구분"]=="지출"].empty:
     fig = px.pie(df[df["구분"]=="지출"], values="금액", names="항목", hole=0.4)
     st.plotly_chart(fig, use_container_width=True)
+
 
