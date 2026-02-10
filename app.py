@@ -8,7 +8,7 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="WealthFlow Shared", layout="wide")
 
 # 2. 구글 시트 연결
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit?usp=sharing"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 3. 사이드바 로그인
@@ -17,42 +17,44 @@ access_id = st.sidebar.text_input("접속 아이디를 입력하세요", value="
 
 if not access_id:
     st.title("💰 자산관리를 위한 웹페이지")
-    st.info("왼쪽 사이드바에 사용하실 ID를 입력해주세요. 처음이시면 새 ID를 만드시면 됩니다.")
+    st.info("왼쪽 사이드바에 사용하실 ID를 입력해주세요. 처음이시면 새 ID를 입력 후 장부를 생성하세요.")
     st.stop()
 
-# 기본 데이터 구조
-EMPTY_DF = pd.DataFrame(columns=["날짜", "구분", "항목", "금액", "메모"])
+# 가계부 기본 필수 헤더
+HEADER = ["날짜", "구분", "항목", "금액", "메모"]
 
-# 4. 데이터 로드 및 자동 생성 로직
+# 4. 데이터 로드 로직
 try:
-    # 일단 읽어오기 시도
+    # ttl=0으로 설정하여 캐시 없이 실시간 확인
     df = conn.read(spreadsheet=SHEET_URL, worksheet=access_id, ttl=0)
+    
+    # 탭은 존재하지만 데이터가 아예 없는 경우(헤더도 없는 경우) 처리
+    if df is None or df.empty and len(df.columns) < 5:
+        df = pd.DataFrame(columns=HEADER)
 except Exception:
-    # 탭이 없어서 에러가 난 경우
-    st.warning(f"🤔 '{access_id}' 아이디가 존재하지 않습니다.")
-    if st.button(f"✨ '{access_id}'로 새 장부 만들기"):
+    # 탭이 존재하지 않을 때 실행
+    st.warning(f"🤔 '{access_id}' 장부가 아직 없습니다.")
+    if st.button(f"✨ '{access_id}' 아이디로 새 장부 만들기", use_container_width=True):
         try:
-            # 새 탭에 기본 헤더만 담아서 업데이트 (이때 구글 시트에 새 탭이 생성됩니다)
-            conn.update(spreadsheet=SHEET_URL, worksheet=access_id, data=EMPTY_DF)
-            st.success(f"✅ '{access_id}' 장부가 성공적으로 생성되었습니다!")
+            # 제목 줄(헤더)이 포함된 빈 데이터프레임 생성 후 업로드
+            init_df = pd.DataFrame(columns=HEADER)
+            conn.update(spreadsheet=SHEET_URL, worksheet=access_id, data=init_df)
+            st.success(f"✅ '{access_id}' 장부가 생성되었습니다! 잠시 후 자동으로 새로고침됩니다.")
             st.rerun()
-        except Exception as create_err:
-            st.error("장부 생성에 실패했습니다. 구글 시트가 '편집자' 권한으로 공유되어 있는지 확인해주세요.")
+        except Exception as e:
+            st.error("장부 생성 실패. 구글 시트 공유 권한을 다시 확인해주세요.")
             st.stop()
     st.stop()
 
-# 데이터 전처리 (데이터가 있는 경우)
-if not df.empty:
-    df["날짜"] = pd.to_datetime(df["날짜"], errors='coerce')
-    df["금액"] = pd.to_numeric(df["금액"], errors='coerce').fillna(0)
-    df = df.sort_values("날짜", ascending=False)
-else:
-    df = EMPTY_DF.copy()
+# 데이터 전처리
+df["날짜"] = pd.to_datetime(df["날짜"], errors='coerce')
+df["금액"] = pd.to_numeric(df["금액"], errors='coerce').fillna(0)
+df = df.sort_values("날짜", ascending=False)
 
 # 5. 메인 대시보드 표시
 st.title(f"📊 {access_id} 장부 대시보드")
 
-# 상단 요약 수치 계산
+# 상단 요약 수치
 inc = df[df["구분"] == "수익"]["금액"].sum()
 exp = df[df["구분"] == "지출"]["금액"].sum()
 sav = df[df["구분"] == "저축-적금"]["금액"].sum()
@@ -66,7 +68,7 @@ m4.metric("💸 누적 지출", f"{exp:,.0f}원")
 
 st.divider()
 
-# 6. 데이터 입력 및 확인
+# 6. 데이터 입력 및 편집
 col_in, col_view = st.columns([1, 2])
 
 with col_in:
@@ -79,34 +81,23 @@ with col_in:
         submit = st.form_submit_button("장부에 기록", use_container_width=True)
         
         if submit and i and a > 0:
-            new_data = pd.DataFrame([{"날짜": d.strftime("%Y-%m-%d"), "구분": g, "항목": i, "금액": a, "메모": ""}])
-            # 기존 데이터와 병합
-            updated_df = pd.concat([df, new_data], ignore_index=True)
-            try:
-                conn.update(spreadsheet=SHEET_URL, worksheet=access_id, data=updated_df)
-                st.success("기록되었습니다!")
-                st.rerun()
-            except:
-                st.error("저장에 실패했습니다. 권한을 확인하세요.")
+            new_row = pd.DataFrame([{"날짜": d.strftime("%Y-%m-%d"), "구분": g, "항목": i, "금액": a, "메모": ""}])
+            updated_df = pd.concat([df, new_row], ignore_index=True)
+            conn.update(spreadsheet=SHEET_URL, worksheet=access_id, data=updated_df)
+            st.success("기록 완료!")
+            st.rerun()
 
 with col_view:
-    st.subheader("📑 상세 내역")
-    # 편집기에서 삭제나 수정 후 저장 가능
+    st.subheader("📑 상세 내역 확인 및 수정")
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
-    if st.button("💾 변경사항 전체 저장", use_container_width=True):
-        try:
-            conn.update(spreadsheet=SHEET_URL, worksheet=access_id, data=edited_df)
-            st.success("전체 저장 완료!")
-            st.rerun()
-        except:
-            st.error("저장에 실패했습니다.")
+    if st.button("💾 변경사항 저장", use_container_width=True):
+        conn.update(spreadsheet=SHEET_URL, worksheet=access_id, data=edited_df)
+        st.success("저장되었습니다!")
+        st.rerun()
 
-# 7. 하단 차트
+# 7. 지출 차트
 st.subheader("📈 지출 분포")
-exp_only = df[df["구분"] == "지출"]
-if not exp_only.empty:
-    fig = px.pie(exp_only, values="금액", names="항목", hole=0.4)
+exp_df = df[df["구분"] == "지출"]
+if not exp_df.empty:
+    fig = px.pie(exp_df, values="금액", names="항목", hole=0.4)
     st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("지출 내역이 있어야 차트가 표시됩니다.")
-
