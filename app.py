@@ -8,7 +8,7 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="WealthFlow Shared", layout="wide")
 
 # 2. 구글 시트 연결
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit?usp=sharing"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 3. 사이드바 로그인
@@ -109,3 +109,4 @@ if not exp_only.empty:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("지출 내역이 있어야 차트가 표시됩니다.")
+
