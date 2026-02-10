@@ -19,8 +19,8 @@ user_input = st.sidebar.text_input("접속 아이디를 입력하세요", value=
 # 구글 시트에서 해당 탭을 클릭했을 때 주소창 끝에 나오는 gid=숫자 부분입니다.
 user_mapping = {
     "newbin": "0",          # 첫 번째 탭 (보통 0)
-    "sheet2": "1542887265"   
-    "sheet3": "2039379199"   
+    "sheet2": "1542887265",   
+    "sheet3": "2039379199",   
     "sheet4": "866978095"   
 }
 
@@ -105,4 +105,5 @@ exp_df = df[df["구분"] == "지출"]
 if not exp_df.empty:
     fig = px.pie(exp_df, values="금액", names="항목", hole=0.4)
     st.plotly_chart(fig, use_container_width=True)
+
 
