@@ -7,20 +7,20 @@ from streamlit_gsheets import GSheetsConnection
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Multi-User", layout="wide")
 
-# 2. 구글 시트 기본 URL (gid 제외)
+# 2. 구글 시트 연결
 BASE_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 3. 사이드바 로그인 및 탭 GID 매핑
+# 3. 사이드바 로그인 및 탭 정보 매핑 (GID와 이름을 매칭)
 st.sidebar.title("💎 WealthFlow Pro")
 user_input = st.sidebar.text_input("접속 아이디를 입력하세요", value="").strip().lower()
 
-# [중요] 각 아이디별 구글 시트 탭의 gid 번호 (쉼표 추가 완료)
+# [수정] 각 아이디별로 GID(읽기용)와 실제 시트의 탭 이름(쓰기용)을 정확히 적어주세요.
 user_mapping = {
-    "newbin": "0",          
-    "sheet2": "1542887265",
-    "sheet3": "2039379199",
-    "sheet4": "866978095"
+    "newbin": {"gid": "0", "name": "newbin"},
+    "sheet2": {"gid": "1542887265", "name": "sheet2"},
+    "sheet3": {"gid": "2039379199", "name": "sheet3"},
+    "sheet4": {"gid": "866978095", "name": "sheet4"}
 }
 
 if not user_input:
@@ -32,19 +32,20 @@ if user_input not in user_mapping:
     st.error(f"❌ '{user_input}'은 등록되지 않은 ID입니다.")
     st.stop()
 
-# 해당 사용자의 탭 주소 생성
-target_gid = user_mapping[user_input]
-TARGET_URL = f"{BASE_URL}?gid={target_gid}"
+# 해당 사용자의 정보 가져오기
+target_gid = user_mapping[user_input]["gid"]
+target_name = user_mapping[user_input]["name"]  # 쓰기 작업에 사용될 실제 탭 이름
+READ_URL = f"{BASE_URL}?gid={target_gid}"
 
 # 4. 데이터 로드
 try:
-    df = conn.read(spreadsheet=TARGET_URL, ttl=0)
+    # 읽을 때는 GID가 포함된 URL을 사용 (가장 안정적)
+    df = conn.read(spreadsheet=READ_URL, ttl=0)
     
     if df is None or df.empty:
         df = pd.DataFrame(columns=["날짜", "구분", "항목", "금액", "메모"])
 except Exception as e:
     st.error("데이터 로드 중 오류가 발생했습니다.")
-    st.info("구글 시트의 공유 설정(편집자) 및 GID 번호를 확인해주세요.")
     st.stop()
 
 # 데이터 전처리
@@ -54,7 +55,7 @@ df = df.sort_values("날짜", ascending=False)
 
 st.title(f"📊 {user_input}님 전용 대시보드")
 
-# 요약 수치
+# 요약 수치 계산 부분 (기존과 동일)
 inc = df[df["구분"] == "수익"]["금액"].sum()
 exp = df[df["구분"] == "지출"]["금액"].sum()
 sav = df[df["구분"] == "저축-적금"]["금액"].sum()
@@ -84,7 +85,9 @@ with col_in:
         if submit and i and a > 0:
             new_row = pd.DataFrame([{"날짜": d.strftime("%Y-%m-%d"), "구분": g, "항목": i, "금액": a, "메모": memo}])
             updated_df = pd.concat([df, new_row], ignore_index=True)
-            conn.update(spreadsheet=TARGET_URL, data=updated_df)
+            
+            # [수정] 업데이트 시에는 GID 주소가 아닌 원본 URL과 실제 시트 이름을 전달합니다.
+            conn.update(spreadsheet=BASE_URL, worksheet=target_name, data=updated_df)
             st.success("기록 완료!")
             st.rerun()
 
@@ -92,7 +95,8 @@ with col_view:
     st.subheader("📑 상세 내역 관리")
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
     if st.button("💾 전체 변경사항 저장", use_container_width=True):
-        conn.update(spreadsheet=TARGET_URL, data=edited_df)
+        # [수정] 업데이트 시에는 원본 URL과 실제 시트 이름을 사용합니다.
+        conn.update(spreadsheet=BASE_URL, worksheet=target_name, data=edited_df)
         st.success("구글 시트와 동기화되었습니다!")
         st.rerun()
 
