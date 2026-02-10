@@ -8,46 +8,51 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="WealthFlow Shared", layout="wide")
 
 # 2. 구글 시트 연결
-# 주소 끝에 gid 등이 붙어있지 않은지 확인하세요.
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 3. 사이드바 로그인
 st.sidebar.title("💎 WealthFlow")
-access_id = st.sidebar.text_input("접속 아이디를 입력하세요 (시트 탭 이름)", value="").strip()
+access_id = st.sidebar.text_input("접속 아이디를 입력하세요", value="").strip()
 
 if not access_id:
     st.title("💰 자산관리를 위한 웹페이지")
-    st.info("왼쪽 사이드바에 지정 받은 ID(구글 시트 탭 이름)를 입력해주세요.")
+    st.info("왼쪽 사이드바에 사용하실 ID를 입력해주세요. 처음이시면 새 ID를 만드시면 됩니다.")
     st.stop()
 
-# 4. 데이터 로드 (ttl=0으로 설정하여 실시간 탭 변경 감지)
+# 기본 데이터 구조
+EMPTY_DF = pd.DataFrame(columns=["날짜", "구분", "항목", "금액", "메모"])
+
+# 4. 데이터 로드 및 자동 생성 로직
 try:
-    # ttl=0은 캐시를 사용하지 않고 즉시 시트의 최신 상태를 읽어옵니다.
+    # 일단 읽어오기 시도
     df = conn.read(spreadsheet=SHEET_URL, worksheet=access_id, ttl=0)
-except Exception as e:
-    st.error(f"❌ '{access_id}'라는 이름의 탭을 찾을 수 없습니다.")
-    st.warning("확인 사항:")
-    st.write("1. 구글 시트 하단 탭 이름이 아이디와 정확히 일치하는지 (대소문자/공백 확인)")
-    st.write("2. 구글 시트 공유 설정이 '편집자'로 되어 있는지")
-    # 개발 참고용 실제 에러 메시지 출력
-    with st.expander("상세 에러 내용 보기"):
-        st.code(str(e))
+except Exception:
+    # 탭이 없어서 에러가 난 경우
+    st.warning(f"🤔 '{access_id}' 아이디가 존재하지 않습니다.")
+    if st.button(f"✨ '{access_id}'로 새 장부 만들기"):
+        try:
+            # 새 탭에 기본 헤더만 담아서 업데이트 (이때 구글 시트에 새 탭이 생성됩니다)
+            conn.update(spreadsheet=SHEET_URL, worksheet=access_id, data=EMPTY_DF)
+            st.success(f"✅ '{access_id}' 장부가 성공적으로 생성되었습니다!")
+            st.rerun()
+        except Exception as create_err:
+            st.error("장부 생성에 실패했습니다. 구글 시트가 '편집자' 권한으로 공유되어 있는지 확인해주세요.")
+            st.stop()
     st.stop()
 
-# 데이터 전처리 (데이터가 있는 경우에만 실행)
+# 데이터 전처리 (데이터가 있는 경우)
 if not df.empty:
     df["날짜"] = pd.to_datetime(df["날짜"], errors='coerce')
     df["금액"] = pd.to_numeric(df["금액"], errors='coerce').fillna(0)
     df = df.sort_values("날짜", ascending=False)
 else:
-    # 빈 시트일 경우 기본 구조 생성
-    df = pd.DataFrame(columns=["날짜", "구분", "항목", "금액", "메모"])
+    df = EMPTY_DF.copy()
 
 # 5. 메인 대시보드 표시
 st.title(f"📊 {access_id} 장부 대시보드")
 
-# 상단 요약 수치
+# 상단 요약 수치 계산
 inc = df[df["구분"] == "수익"]["금액"].sum()
 exp = df[df["구분"] == "지출"]["금액"].sum()
 sav = df[df["구분"] == "저축-적금"]["금액"].sum()
@@ -75,19 +80,18 @@ with col_in:
         
         if submit and i and a > 0:
             new_data = pd.DataFrame([{"날짜": d.strftime("%Y-%m-%d"), "구분": g, "항목": i, "금액": a, "메모": ""}])
+            # 기존 데이터와 병합
             updated_df = pd.concat([df, new_data], ignore_index=True)
-            # 데이터 업데이트 시도
             try:
                 conn.update(spreadsheet=SHEET_URL, worksheet=access_id, data=updated_df)
-                st.success("기록되었습니다! 화면을 새로고침 해주세요.")
+                st.success("기록되었습니다!")
                 st.rerun()
-            except Exception as update_err:
-                st.error("데이터 저장 실패. 구글 시트 권한(편집자)을 확인하세요.")
-                st.info("임시 조치: 구글 시트에서 직접 입력하거나 서비스 계정 설정이 필요할 수 있습니다.")
+            except:
+                st.error("저장에 실패했습니다. 권한을 확인하세요.")
 
 with col_view:
     st.subheader("📑 상세 내역")
-    # 데이터 에디터 (수정 가능)
+    # 편집기에서 삭제나 수정 후 저장 가능
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
     if st.button("💾 변경사항 전체 저장", use_container_width=True):
         try:
