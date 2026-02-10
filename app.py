@@ -7,65 +7,51 @@ from streamlit_gsheets import GSheetsConnection
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Multi-User", layout="wide")
 
-# 2. 구글 시트 연결
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
+# 2. 구글 시트 기본 URL (gid 제외)
+BASE_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 3. 사이드바 로그인 및 탭 매핑 (순서 고정)
+# 3. 사이드바 로그인 및 탭 GID 매핑
 st.sidebar.title("💎 WealthFlow Pro")
 user_input = st.sidebar.text_input("접속 아이디를 입력하세요", value="").strip().lower()
 
-# [중요] 아이디와 탭 순서 매핑 (0부터 시작)
+# [중요] 각 아이디별 구글 시트 탭의 gid 번호를 입력하세요.
+# 구글 시트에서 해당 탭을 클릭했을 때 주소창 끝에 나오는 gid=숫자 부분입니다.
 user_mapping = {
-    "newbin": 0,   # 첫 번째 탭
-    "sheet2": 1,   # 두 번째 탭
-    "sheet3": 2,   # 세 번째 탭
-    "sheet4": 3,   # 네 번째 탭
-    "sheet5": 4    # 다섯 번째 탭
+    "newbin": "0",          # 첫 번째 탭 (보통 0)
+    "sheet2": "167576288"   # 예시: 두 번째 탭의 gid (본인의 시트 주소창에서 확인 후 수정!)
 }
 
 if not user_input:
     st.title("💰 자산관리 시스템")
-    st.info("왼쪽 사이드바에 부여받은 ID를 입력하여 장부를 열어주세요.")
+    st.info("왼쪽 사이드바에 아이디를 입력해주세요.")
     st.stop()
 
 if user_input not in user_mapping:
     st.error(f"❌ '{user_input}'은 등록되지 않은 ID입니다.")
     st.stop()
 
-# 해당 아이디의 탭 번호 할당
-target_index = user_mapping[user_input]
+# 해당 사용자의 탭 주소 생성
+target_gid = user_mapping[user_input]
+TARGET_URL = f"{BASE_URL}?gid={target_gid}"
 
-# 4. 데이터 로드 (에러 수정된 버전)
+# 4. 데이터 로드 (URL에 gid를 직접 포함)
 try:
-    # 라이브러리의 내부 클라이언트를 사용해 탭 목록을 가져옵니다.
-    # 이 방식이 가장 확실하게 모든 탭 이름을 배열로 가져옵니다.
-    all_sheets = conn.client.open_by_url(SHEET_URL).worksheets()
-    
-    if target_index >= len(all_sheets):
-        st.error(f"구글 시트에 {target_index + 1}번째 탭이 존재하지 않습니다.")
-        st.stop()
-        
-    target_sheet_name = all_worksheets[target_index].title
-    
-    # 해당 탭 이름으로 데이터 읽기
-    df = conn.read(spreadsheet=SHEET_URL, worksheet=target_sheet_name, ttl=0)
+    # worksheet 이름을 쓰지 않고, gid가 포함된 전체 URL을 전달합니다.
+    df = conn.read(spreadsheet=TARGET_URL, ttl=0)
     
     if df is None or df.empty:
         df = pd.DataFrame(columns=["날짜", "구분", "항목", "금액", "메모"])
 except Exception as e:
     st.error("데이터 로드 중 오류가 발생했습니다.")
-    st.info("구글 시트의 탭 개수와 매핑된 번호가 일치하는지 확인해주세요.")
-    with st.expander("상세 에러 내용"):
-        st.write(e)
+    st.info("구글 시트의 공유 설정(편집자) 및 GID 번호를 확인해주세요.")
     st.stop()
 
-# 데이터 전처리
+# --- 이후 데이터 처리 및 UI 코드는 이전과 동일합니다 ---
 df["날짜"] = pd.to_datetime(df["날짜"], errors='coerce')
 df["금액"] = pd.to_numeric(df["금액"], errors='coerce').fillna(0)
 df = df.sort_values("날짜", ascending=False)
 
-# 5. 메인 화면 구성
 st.title(f"📊 {user_input}님 전용 대시보드")
 
 # 요약 수치
@@ -98,7 +84,8 @@ with col_in:
         if submit and i and a > 0:
             new_row = pd.DataFrame([{"날짜": d.strftime("%Y-%m-%d"), "구분": g, "항목": i, "금액": a, "메모": memo}])
             updated_df = pd.concat([df, new_row], ignore_index=True)
-            conn.update(spreadsheet=SHEET_URL, worksheet=target_sheet_name, data=updated_df)
+            # 업데이트 시에도 GID가 포함된 URL 사용
+            conn.update(spreadsheet=TARGET_URL, data=updated_df)
             st.success("기록 완료!")
             st.rerun()
 
@@ -106,14 +93,13 @@ with col_view:
     st.subheader("📑 상세 내역 관리")
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
     if st.button("💾 전체 변경사항 저장", use_container_width=True):
-        conn.update(spreadsheet=SHEET_URL, worksheet=target_sheet_name, data=edited_df)
+        conn.update(spreadsheet=TARGET_URL, data=edited_df)
         st.success("구글 시트와 동기화되었습니다!")
         st.rerun()
 
-# 7. 시각화
 st.divider()
 st.subheader("📈 지출 분포")
 exp_df = df[df["구분"] == "지출"]
 if not exp_df.empty:
-    fig = px.pie(exp_df, values="금액", names="항목", hole=0.4, color_discrete_sequence=px.colors.qualitative.Set3)
+    fig = px.pie(exp_df, values="금액", names="항목", hole=0.4)
     st.plotly_chart(fig, use_container_width=True)
