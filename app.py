@@ -35,7 +35,10 @@ target_worksheet = user_mapping[user_input]
 # 4. 데이터 로드 및 에러 추적
 try:
     # 워크시트 이름을 지정하여 데이터를 읽어옵니다.
-    df = conn.read(worksheet=target_worksheet, ttl=0)
+df = conn.read(
+    spreadsheet="https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg",
+    worksheet="newbin",
+    ttl=0
     
 except Exception as e:
     st.error("❌ 데이터를 불러올 수 없습니다.")
@@ -104,5 +107,6 @@ st.divider()
 # 6. 내역 보기
 st.subheader("📑 최근 내역")
 st.dataframe(df.sort_values("날짜", ascending=False), use_container_width=True)
+
 
 
