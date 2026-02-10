@@ -7,7 +7,7 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="WealthFlow Pro", layout="wide")
 
 # 2. 구글 시트 연결
-conn = st.connection("gsheets", type=GSheetsConnection, connection_name="gsheets"))
+conn = st.connection("gsheets", type=GSheetsConnection, connection_name="gsheets")
 
 # 3. 사이드바 설정
 st.sidebar.title("💎 WealthFlow Pro")
@@ -94,5 +94,6 @@ if not df.empty:
     st.dataframe(df.sort_values("날짜", ascending=False), use_container_width=True)
 else:
     st.info("기록된 데이터가 없습니다.")
+
 
 
