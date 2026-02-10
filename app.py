@@ -4,7 +4,7 @@ from datetime import date
 import gspread
 from google.oauth2.service_account import Credentials
 import json
-import plotly.express as px # 그래프를 위해 추가
+import plotly.express as px
 
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Pro", layout="wide")
@@ -52,7 +52,7 @@ def load_data(ws_name):
 
 df, worksheet = load_data(target_worksheet_name)
 
-# 5. 메인 화면 및 입력 폼
+# 5. 메인 화면 상단: 입력 폼
 st.title(f"📊 {user_input.upper()}님 대시보드")
 
 with st.expander("➕ 새로운 내역 기록하기", expanded=True):
@@ -78,15 +78,29 @@ with st.expander("➕ 새로운 내역 기록하기", expanded=True):
 
 st.divider()
 
-# 6. 통계 분석 섹션
+# 6. 메인 화면 중간: 상세 내역 리스트 (중간 배치)
+st.subheader("📑 상세 내역 리스트")
 if not df.empty:
+    # 날짜를 보기 좋게 문자열로 변환하여 출력
+    display_df = df.copy()
+    display_df['date'] = display_df['date'].dt.strftime('%Y-%m-%d')
+    st.dataframe(display_df.sort_values('date', ascending=False), use_container_width=True)
+else:
+    st.info("기록된 데이터가 아직 없습니다. 첫 내역을 입력해 보세요!")
+
+st.divider()
+
+# 7. 메인 화면 하단: 통계 분석 (하단 배치)
+if not df.empty:
+    st.subheader("📈 지출 분석 리포트")
     col_left, col_right = st.columns(2)
+
+    # '지출' 항목만 필터링
+    expense_df = df[df['category'] == '지출'].copy()
 
     # A. 날짜별 지출 총액 (막대 그래프)
     with col_left:
-        st.subheader("📅 날짜별 지출 합계")
-        # '지출' 항목만 필터링
-        expense_df = df[df['category'] == '지출'].copy()
+        st.markdown("#### 📅 날짜별 지출 합계")
         if not expense_df.empty:
             daily_expense = expense_df.groupby('date')['amount'].sum().reset_index()
             fig_bar = px.bar(daily_expense, x='date', y='amount', 
@@ -98,21 +112,12 @@ if not df.empty:
 
     # B. 항목별 지출 비율 (원그래프)
     with col_right:
-        st.subheader("🍕 항목별 지출 비율")
+        st.markdown("#### 🍕 항목별 지출 비율")
         if not expense_df.empty:
             item_expense = expense_df.groupby('item')['amount'].sum().reset_index()
             fig_pie = px.pie(item_expense, values='amount', names='item', 
-                             hole=0.4, # 도넛 모양
+                             hole=0.4, 
                              color_discrete_sequence=px.colors.sequential.RdBu)
             st.plotly_chart(fig_pie, use_container_width=True)
         else:
             st.info("분석할 지출 내역이 없습니다.")
-
-    st.divider()
-
-    # 7. 전체 내역 표
-    st.subheader("📑 상세 내역 리스트")
-    # 최신순 정렬을 위해 날짜 기준 내림차순
-    st.dataframe(df.sort_values('date', ascending=False), use_container_width=True)
-else:
-    st.info("기록된 데이터가 아직 없습니다. 첫 내역을 입력해 보세요!")
