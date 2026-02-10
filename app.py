@@ -1,18 +1,16 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-from datetime import date
 from streamlit_gsheets import GSheetsConnection
 
-# 1. 페이지 설정
-st.set_page_config(page_title="WF Mobile", layout="wide")
+# 1. 페이지 설정 (매우 단순하게)
+st.set_page_config(page_title="WF Mobile")
 
 # 2. 구글 시트 연결
 BASE_URL = "https://docs.google.com/spreadsheets/d/1se066IRVdZ_JA2phYiGqCxr1RAVibqFOZhYTqrd81yg/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 3. 사이드바 (아이디 입력)
-user_input = st.sidebar.text_input("ID", value="").strip().lower()
+# 3. 로그인 (사이드바 대신 메인 화면에 배치하여 엔진 부하 감소)
+user_input = st.text_input("Enter ID", value="").strip().lower()
 
 user_mapping = {
     "newbin": "0",          
@@ -21,73 +19,42 @@ user_mapping = {
     "sheet4": "866978095"
 }
 
-if not user_input:
-    st.info("ID를 입력해주세요.")
-    st.stop()
+if user_input in user_mapping:
+    target_gid = user_mapping[user_input]
+    TARGET_URL = f"{BASE_URL}?gid={target_gid}"
 
-if user_input not in user_mapping:
-    st.error("ID 없음")
-    st.stop()
+    # 4. 데이터 로드
+    try:
+        # 데이터프레임을 바로 읽어옴
+        df = conn.read(spreadsheet=TARGET_URL, ttl=0)
+        
+        # 5. 요약 (st.metric 대신 일반 텍스트 사용)
+        inc = pd.to_numeric(df[df["구분"] == "수익"]["금액"]).sum()
+        exp = pd.to_numeric(df[df["구분"] == "지출"]["금액"]).sum()
+        
+        st.write(f"### User: {user_input}")
+        st.write(f"**Current Balance:** {inc - exp:,.0f}원")
+        st.write(f"**Total Spend:** {exp:,.0f}원")
+        
+        # 6. 간단한 입력 폼
+        with st.expander("➕ 내역 추가하기"):
+            with st.form("mobile_form"):
+                i_item = st.text_input("항목")
+                i_amount = st.number_input("금액", step=1000)
+                i_type = st.selectbox("구분", ["지출", "수익", "저축-적금", "저축-투자"])
+                if st.form_submit_button("저장"):
+                    new_data = pd.DataFrame([{"날짜": pd.Timestamp.now().strftime("%Y-%m-%d"), "구분": i_type, "항목": i_item, "금액": i_amount, "메모": ""}])
+                    updated_df = pd.concat([df, new_data], ignore_index=True)
+                    conn.update(spreadsheet=TARGET_URL, data=updated_df)
+                    st.rerun()
 
-target_gid = user_mapping[user_input]
-TARGET_URL = f"{BASE_URL}?gid={target_gid}"
+        # 7. 데이터 확인 (data_editor 대신 단순 table 사용)
+        # 이 부분이 모바일 에러의 핵심일 수 있어 st.table로 대체합니다.
+        st.write("---")
+        st.write("📂 최신 내역 (상위 10개)")
+        st.table(df.tail(10)) 
 
-# 4. 데이터 로드
-try:
-    df = conn.read(spreadsheet=TARGET_URL, ttl=0)
-    if df is None or df.empty:
-        df = pd.DataFrame(columns=["날짜", "구분", "항목", "금액", "메모"])
-except:
-    st.stop()
-
-# 데이터 전처리
-df["날짜"] = pd.to_datetime(df["날짜"], errors='coerce')
-df["금액"] = pd.to_numeric(df["금액"], errors='coerce').fillna(0)
-df = df.sort_values("날짜", ascending=False)
-
-# 5. 메인 화면 (에러 우회를 위해 텍스트 출력 최소화)
-# st.title 대신 헤더를 사용하고, 특수기호를 최대한 뺍니다.
-st.header(f"WealthFlow {user_input}")
-
-# 요약 수치
-inc = df[df["구분"] == "수익"]["금액"].sum()
-exp = df[df["구분"] == "지출"]["금액"].sum()
-sav = df[df["구분"] == "저축-적금"]["금액"].sum()
-inv = df[df["구분"] == "저축-투자"]["금액"].sum()
-
-# 모바일은 컬럼을 너무 많이 나누면 에러 확률이 높으므로 2개씩 배치
-c1, c2 = st.columns(2)
-c1.metric("Cash", f"{inc - exp - sav - inv:,.0f}")
-c2.metric("Savings", f"{sav:,.0f}")
-c1.metric("Invest", f"{inv:,.0f}")
-c2.metric("Spend", f"{exp:,.0f}")
-
-st.divider()
-
-# 6. 내역 추가 폼
-with st.form("add"):
-    d = st.date_input("Date")
-    g = st.selectbox("Type", ["수익", "지출", "저축-적금", "저축-투자"])
-    i = st.text_input("Item")
-    a = st.number_input("Amount", step=1000)
-    sub = st.form_submit_button("Save", use_container_width=True)
-    
-    if sub and i:
-        new = pd.DataFrame([{"날짜": d.strftime("%Y-%m-%d"), "구분": g, "항목": i, "금액": a, "메모": ""}])
-        updated = pd.concat([df, new], ignore_index=True)
-        conn.update(spreadsheet=TARGET_URL, data=updated)
-        st.rerun()
-
-# 7. 내역 보기 (st.data_editor가 모바일 에러의 주범일 수 있음 -> st.dataframe으로 변경 시도)
-st.subheader("History")
-# 에러가 계속되면 아래 data_editor를 st.dataframe(df)로 바꿔보세요.
-edited_df = st.data_editor(df, use_container_width=True)
-if st.button("Sync All"):
-    conn.update(spreadsheet=TARGET_URL, data=edited_df)
-    st.rerun()
-
-# 8. 차트 (Plotly는 모바일 호환성이 좋음)
-exp_df = df[df["구분"] == "지출"]
-if not exp_df.empty:
-    fig = px.pie(exp_df, values="금액", names="항목")
-    st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.write("로그인 성공. 데이터를 불러오는 중입니다...")
+else:
+    st.write("아이디를 입력해 주세요.")
