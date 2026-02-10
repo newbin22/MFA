@@ -31,16 +31,12 @@ if user_input not in user_mapping:
 target_worksheet = user_mapping[user_input]
 
 # 4. 데이터 로드 (들여쓰기 수정 완료)
+# app.py의 36~40번 라인 근처 수정
 try:
-    # URL은 Secrets에 있으므로 worksheet 이름만 정확히 전달합니다.
-    df = conn.read(
-        worksheet=target_worksheet,
-        ttl=0
-    )
+    # 워크시트 이름을 빼고 가장 기본형으로 읽어봅니다.
+    df = conn.read(ttl=0)
 except Exception as e:
-    st.error("❌ 데이터를 불러올 수 없습니다.")
-    st.info("아래 에러 내용을 확인하세요:")
-    st.code(str(e))
+    st.error(f"상세 에러: {e}")
     st.stop()
 
 # 데이터 전처리
@@ -98,3 +94,4 @@ if not df.empty:
     st.dataframe(df.sort_values("날짜", ascending=False), use_container_width=True)
 else:
     st.info("기록된 데이터가 없습니다.")
+
