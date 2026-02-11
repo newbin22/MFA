@@ -9,7 +9,7 @@ import plotly.express as px
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Pro", layout="wide")
 
-# 2. 구글 시트 연결 설정 (gspread 방식)
+# 2. 구글 시트 연결 설정
 def get_gspread_client():
     creds_info = json.loads(st.secrets["connections"]["gsheets"]["service_account"])
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -41,7 +41,7 @@ if not user_input or user_input not in user_mapping:
 
 target_worksheet_name = user_mapping[user_input]
 
-# 4. 데이터 로드 및 저장 함수
+# 4. 데이터 로드 함수
 def load_data(ws_name):
     try:
         ws = sh.worksheet(ws_name)
@@ -49,10 +49,12 @@ def load_data(ws_name):
         df = pd.DataFrame(data)
         
         if not df.empty:
-            if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date']).dt.date # 편집을 위해 date 객체로 변환
-            if 'amount' in df.columns:
-                df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+            # 날짜와 금액 형식 정리
+            df['date'] = pd.to_datetime(df['date']).dt.date
+            df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0).astype(int)
+            # 텍스트 컬럼 보장
+            df['item'] = df['item'].astype(str)
+            df['memo'] = df['memo'].astype(str)
         else:
             df = pd.DataFrame(columns=["date", "category", "item", "amount", "memo"])
             
@@ -92,76 +94,66 @@ with st.expander("➕ 새로운 내역 기록하기", expanded=False):
 
 st.divider()
 
-# 6. 메인 화면 중간: 상세 내역 리스트 (편집 및 삭제 기능)
-st.subheader("📑 내역 편집 및 관리")
-st.caption("💡 표 안의 내용을 수정하거나 행을 선택해 삭제(Del 키)한 후 반드시 아래 저장 버튼을 눌러주세요.")
+# 6. 메인 화면 중간: 데이터 편집 (수정/삭제 기능 강화)
+st.subheader("📑 내역 관리")
+st.caption("💡 수정: 셀 더블클릭 / 삭제: 행 선택 후 Delete 키 / 추가: 표 하단 (+) 버튼")
 
 if not df.empty:
-    # 데이터 에디터 활용
+    # 데이터 에디터 (수정 가능 여부 명시적 설정)
     edited_df = st.data_editor(
         df,
         use_container_width=True,
-        num_rows="dynamic", # 행 추가/삭제 가능
+        num_rows="dynamic",
         column_config={
-            "date": st.column_config.DateColumn("날짜", format="YYYY-MM-DD"),
-            "category": st.column_config.SelectboxColumn("구분", options=["수익", "지출", "저축-적금", "저축-투자"]),
-            "item": st.column_config.TextColumn("항목"),
-            "amount": st.column_config.NumberColumn("금액", format="%d원"),
-            "memo": st.column_config.TextColumn("메모")
+            "date": st.column_config.DateColumn("날짜", format="YYYY-MM-DD", required=True),
+            "category": st.column_config.SelectboxColumn("구분", options=["수익", "지출", "저축-적금", "저축-투자"], required=True),
+            "item": st.column_config.TextColumn("항목", required=True, disabled=False), # disabled=False 명시
+            "amount": st.column_config.NumberColumn("금액", format="%d원", required=True),
+            "memo": st.column_config.TextColumn("메모", disabled=False) # disabled=False 명시
         },
         hide_index=True,
-        key="data_editor"
     )
 
     col_btn, _ = st.columns([1, 4])
     if col_btn.button("💾 변경사항 저장하기", use_container_width=True):
         try:
-            # 시트 업데이트를 위한 데이터 정제
-            save_df = edited_df.copy()
-            save_df['date'] = save_df['date'].apply(lambda x: str(x))
-            
-            # 헤더와 데이터를 합쳐서 한 번에 업데이트
-            new_all_data = [save_df.columns.values.tolist()] + save_df.values.tolist()
-            
-            # 시트 전체 초기화 후 다시 쓰기 (A1부터)
-            worksheet.clear()
-            worksheet.update('A1', new_all_data)
-            
-            st.success("✅ 시트에 변경사항이 반영되었습니다!")
-            st.rerun()
+            with st.spinner("구글 시트에 동기화 중..."):
+                save_df = edited_df.copy()
+                # 저장 전 데이터 포맷팅
+                save_df['date'] = save_df['date'].apply(lambda x: str(x))
+                save_df['amount'] = save_df['amount'].astype(int)
+                
+                # 데이터 업데이트 (헤더 포함)
+                new_all_data = [save_df.columns.values.tolist()] + save_df.values.tolist()
+                
+                worksheet.clear()
+                worksheet.update('A1', new_all_data)
+                
+                st.success("✅ 변경사항이 구글 시트에 반영되었습니다!")
+                st.rerun()
         except Exception as e:
             st.error(f"저장 중 오류 발생: {e}")
 else:
-    st.info("데이터가 없습니다.")
+    st.info("표시할 데이터가 없습니다.")
 
 st.divider()
 
-# 7. 메인 화면 하단: 통계 분석 (지출 데이터만)
+# 7. 메인 화면 하단: 통계 분석
 if not df.empty:
     st.subheader("📈 지출 분석 리포트")
-    
-    # 지출 항목만 추출
     expense_df = df[df['category'] == '지출'].copy()
 
     if not expense_df.empty:
         col_left, col_right = st.columns(2)
-        
         with col_left:
             st.markdown("#### 📅 날짜별 지출 합계")
-            # 일별 합계 계산
             expense_df['date'] = pd.to_datetime(expense_df['date'])
             daily_expense = expense_df.groupby('date')['amount'].sum().reset_index()
-            fig_bar = px.bar(daily_expense, x='date', y='amount', 
-                             color_discrete_sequence=['#FF4B4B'])
+            fig_bar = px.bar(daily_expense, x='date', y='amount', color_discrete_sequence=['#FF4B4B'])
             st.plotly_chart(fig_bar, use_container_width=True)
 
         with col_right:
             st.markdown("#### 🍕 항목별 지출 비율")
             item_expense = expense_df.groupby('item')['amount'].sum().reset_index()
-            fig_pie = px.pie(item_expense, values='amount', names='item', 
-                             hole=0.4, 
-                             color_discrete_sequence=px.colors.sequential.RdBu)
+            fig_pie = px.pie(item_expense, values='amount', names='item', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
             st.plotly_chart(fig_pie, use_container_width=True)
-    else:
-        st.info("'지출'로 분류된 내역이 없어 분석 그래프를 표시할 수 없습니다.")
-
