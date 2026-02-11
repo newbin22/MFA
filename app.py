@@ -49,12 +49,13 @@ def load_data(ws_name):
         df = pd.DataFrame(data)
         
         if not df.empty:
-            # 날짜와 금액 형식 정리
+            # 날짜를 datetime 형식으로 변환하여 정렬 준비
             df['date'] = pd.to_datetime(df['date']).dt.date
             df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0).astype(int)
-            # 텍스트 컬럼 보장
             df['item'] = df['item'].astype(str)
             df['memo'] = df['memo'].astype(str)
+            # 로드 시점에도 날짜순 정렬 (과거 -> 최신)
+            df = df.sort_values('date').reset_index(drop=True)
         else:
             df = pd.DataFrame(columns=["date", "category", "item", "amount", "memo"])
             
@@ -85,21 +86,30 @@ with st.expander("➕ 새로운 내역 기록하기", expanded=False):
                 st.warning("항목과 금액을 입력해주세요.")
             elif worksheet:
                 try:
-                    new_data = [str(d), g, i, int(a), m]
-                    worksheet.append_row(new_data)
-                    st.success("✅ 저장 완료!")
+                    # 신규 데이터 추가 후 전체 정렬 로직 작동
+                    new_row = pd.DataFrame([{"date": d, "category": g, "item": i, "amount": int(a), "memo": m}])
+                    full_df = pd.concat([df, new_row], ignore_index=True)
+                    
+                    # [핵심] 날짜순 정렬 후 시트 업데이트
+                    full_df['date'] = pd.to_datetime(full_df['date']).dt.date
+                    full_df = full_df.sort_values('date')
+                    
+                    save_data = [full_df.columns.values.tolist()] + full_df.astype(str).values.tolist()
+                    worksheet.clear()
+                    worksheet.update('A1', save_data)
+                    
+                    st.success("✅ 날짜 순으로 정렬되어 저장되었습니다!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"저장 실패: {e}")
 
 st.divider()
 
-# 6. 메인 화면 중간: 데이터 편집 (수정/삭제 기능 강화)
-st.subheader("📑 내역 관리")
-st.caption("💡 수정: 셀 더블클릭 / 삭제: 행 선택 후 Delete 키 / 추가: 표 하단 (+) 버튼")
+# 6. 메인 화면 중간: 데이터 편집 (수정 시에도 자동 정렬 반영)
+st.subheader("📑 내역 편집 및 관리")
+st.caption("💡 수정/삭제 후 '변경사항 저장하기'를 누르면 자동으로 날짜순(시계열) 정렬됩니다.")
 
 if not df.empty:
-    # 데이터 에디터 (수정 가능 여부 명시적 설정)
     edited_df = st.data_editor(
         df,
         use_container_width=True,
@@ -107,9 +117,9 @@ if not df.empty:
         column_config={
             "date": st.column_config.DateColumn("날짜", format="YYYY-MM-DD", required=True),
             "category": st.column_config.SelectboxColumn("구분", options=["수익", "지출", "저축-적금", "저축-투자"], required=True),
-            "item": st.column_config.TextColumn("항목", required=True, disabled=False), # disabled=False 명시
+            "item": st.column_config.TextColumn("항목", required=True),
             "amount": st.column_config.NumberColumn("금액", format="%d원", required=True),
-            "memo": st.column_config.TextColumn("메모", disabled=False) # disabled=False 명시
+            "memo": st.column_config.TextColumn("메모")
         },
         hide_index=True,
     )
@@ -117,28 +127,27 @@ if not df.empty:
     col_btn, _ = st.columns([1, 4])
     if col_btn.button("💾 변경사항 저장하기", use_container_width=True):
         try:
-            with st.spinner("구글 시트에 동기화 중..."):
+            with st.spinner("날짜순으로 정렬하여 저장 중..."):
                 save_df = edited_df.copy()
-                # 저장 전 데이터 포맷팅
-                save_df['date'] = save_df['date'].apply(lambda x: str(x))
-                save_df['amount'] = save_df['amount'].astype(int)
+                # [핵심] 저장 직전 날짜순 정렬 수행
+                save_df['date'] = pd.to_datetime(save_df['date']).dt.date
+                save_df = save_df.sort_values('date')
                 
-                # 데이터 업데이트 (헤더 포함)
-                new_all_data = [save_df.columns.values.tolist()] + save_df.values.tolist()
-                
+                # 데이터 포맷팅 및 업데이트
+                new_all_data = [save_df.columns.values.tolist()] + save_df.astype(str).values.tolist()
                 worksheet.clear()
                 worksheet.update('A1', new_all_data)
                 
-                st.success("✅ 변경사항이 구글 시트에 반영되었습니다!")
+                st.success("✅ 시계열 정렬 및 저장이 완료되었습니다!")
                 st.rerun()
         except Exception as e:
             st.error(f"저장 중 오류 발생: {e}")
 else:
-    st.info("표시할 데이터가 없습니다.")
+    st.info("데이터가 없습니다.")
 
 st.divider()
 
-# 7. 메인 화면 하단: 통계 분석
+# 7. 메인 화면 하단: 통계 분석 (정렬된 데이터를 바탕으로 그래프 생성)
 if not df.empty:
     st.subheader("📈 지출 분석 리포트")
     expense_df = df[df['category'] == '지출'].copy()
@@ -149,7 +158,8 @@ if not df.empty:
             st.markdown("#### 📅 날짜별 지출 합계")
             expense_df['date'] = pd.to_datetime(expense_df['date'])
             daily_expense = expense_df.groupby('date')['amount'].sum().reset_index()
-            fig_bar = px.bar(daily_expense, x='date', y='amount', color_discrete_sequence=['#FF4B4B'])
+            # 그래프도 시간 흐름대로 표시
+            fig_bar = px.bar(daily_expense.sort_values('date'), x='date', y='amount', color_discrete_sequence=['#FF4B4B'])
             st.plotly_chart(fig_bar, use_container_width=True)
 
         with col_right:
