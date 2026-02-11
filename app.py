@@ -9,7 +9,7 @@ import plotly.express as px
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Pro", layout="wide")
 
-# 2. 구글 시트 연결 설정
+# 2. 구글 시트 연결 설정 (gspread 방식)
 def get_gspread_client():
     creds_info = json.loads(st.secrets["connections"]["gsheets"]["service_account"])
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -28,7 +28,6 @@ except Exception as e:
 st.sidebar.title("💎 WealthFlow Pro")
 user_input = st.sidebar.text_input("접속 아이디", value="").strip().lower()
 
-# [수정] 모든 시트(newbin, sheet2, sheet3)를 매핑에 추가
 user_mapping = {
     "newbin": "newbin", 
     "sheet2": "sheet2",
@@ -49,20 +48,17 @@ def load_data(ws_name):
         data = ws.get_all_records()
         df = pd.DataFrame(data)
         
-        # 데이터가 있는 경우 형식 변환
         if not df.empty:
-            # 컬럼명이 정확히 일치하는지 확인 후 변환
             if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df['date'] = pd.to_datetime(df['date']).dt.date # 편집을 위해 date 객체로 변환
             if 'amount' in df.columns:
                 df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
         else:
-            # 데이터가 아예 없는 빈 시트일 경우 기본 구조 생성
             df = pd.DataFrame(columns=["date", "category", "item", "amount", "memo"])
             
         return df, ws
     except Exception as e:
-        st.error(f"'{ws_name}' 워크시트를 찾을 수 없거나 로드 중 에러가 발생했습니다.")
+        st.error(f"워크시트 로드 실패: {e}")
         return pd.DataFrame(columns=["date", "category", "item", "amount", "memo"]), None
 
 df, worksheet = load_data(target_worksheet_name)
@@ -70,7 +66,7 @@ df, worksheet = load_data(target_worksheet_name)
 # 5. 메인 화면 상단: 입력 폼
 st.title(f"📊 {user_input.upper()}님 대시보드")
 
-with st.expander("➕ 새로운 내역 기록하기", expanded=True):
+with st.expander("➕ 새로운 내역 기록하기", expanded=False):
     with st.form("add_form", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
         d = col1.date_input("날짜", value=date.today())
@@ -96,39 +92,69 @@ with st.expander("➕ 새로운 내역 기록하기", expanded=True):
 
 st.divider()
 
-# 6. 메인 화면 중간: 상세 내역 리스트
-st.subheader("📑 상세 내역 리스트")
-if not df.empty and len(df.index) > 0:
-    display_df = df.copy()
-    # 날짜 형식 정리 (데이터가 있을 때만)
-    if 'date' in display_df.columns:
-        display_df['date'] = display_df['date'].dt.strftime('%Y-%m-%d')
-    st.dataframe(display_df.sort_values('date', ascending=False), use_container_width=True)
+# 6. 메인 화면 중간: 상세 내역 리스트 (편집 및 삭제 기능)
+st.subheader("📑 내역 편집 및 관리")
+st.caption("💡 표 안의 내용을 수정하거나 행을 선택해 삭제(Del 키)한 후 반드시 아래 저장 버튼을 눌러주세요.")
+
+if not df.empty:
+    # 데이터 에디터 활용
+    edited_df = st.data_editor(
+        df,
+        use_container_width=True,
+        num_rows="dynamic", # 행 추가/삭제 가능
+        column_config={
+            "date": st.column_config.DateColumn("날짜", format="YYYY-MM-DD"),
+            "category": st.column_config.SelectboxColumn("구분", options=["수익", "지출", "저축-적금", "저축-투자"]),
+            "item": st.column_config.TextColumn("항목"),
+            "amount": st.column_config.NumberColumn("금액", format="%d원"),
+            "memo": st.column_config.TextColumn("메모")
+        },
+        hide_index=True,
+        key="data_editor"
+    )
+
+    col_btn, _ = st.columns([1, 4])
+    if col_btn.button("💾 변경사항 저장하기", use_container_width=True):
+        try:
+            # 시트 업데이트를 위한 데이터 정제
+            save_df = edited_df.copy()
+            save_df['date'] = save_df['date'].apply(lambda x: str(x))
+            
+            # 헤더와 데이터를 합쳐서 한 번에 업데이트
+            new_all_data = [save_df.columns.values.tolist()] + save_df.values.tolist()
+            
+            # 시트 전체 초기화 후 다시 쓰기 (A1부터)
+            worksheet.clear()
+            worksheet.update('A1', new_all_data)
+            
+            st.success("✅ 시트에 변경사항이 반영되었습니다!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"저장 중 오류 발생: {e}")
 else:
-    st.info(f"'{user_input}' 시트에 기록된 데이터가 아직 없습니다. 첫 내역을 입력해 보세요!")
+    st.info("데이터가 없습니다.")
 
 st.divider()
 
-# 7. 메인 화면 하단: 통계 분석
-if not df.empty and len(df.index) > 0:
+# 7. 메인 화면 하단: 통계 분석 (지출 데이터만)
+if not df.empty:
     st.subheader("📈 지출 분석 리포트")
     
-    # '지출' 항목만 필터링
+    # 지출 항목만 추출
     expense_df = df[df['category'] == '지출'].copy()
 
     if not expense_df.empty:
         col_left, col_right = st.columns(2)
         
-        # A. 날짜별 지출 총액 (막대 그래프)
         with col_left:
             st.markdown("#### 📅 날짜별 지출 합계")
+            # 일별 합계 계산
+            expense_df['date'] = pd.to_datetime(expense_df['date'])
             daily_expense = expense_df.groupby('date')['amount'].sum().reset_index()
             fig_bar = px.bar(daily_expense, x='date', y='amount', 
-                             labels={'amount':'지출 금액', 'date':'날짜'},
                              color_discrete_sequence=['#FF4B4B'])
             st.plotly_chart(fig_bar, use_container_width=True)
 
-        # B. 항목별 지출 비율 (원그래프)
         with col_right:
             st.markdown("#### 🍕 항목별 지출 비율")
             item_expense = expense_df.groupby('item')['amount'].sum().reset_index()
@@ -137,4 +163,4 @@ if not df.empty and len(df.index) > 0:
                              color_discrete_sequence=px.colors.sequential.RdBu)
             st.plotly_chart(fig_pie, use_container_width=True)
     else:
-        st.info("지출(Expense)로 분류된 내역이 없어 그래프를 표시할 수 없습니다.")
+        st.info("'지출'로 분류된 내역이 없어 분석 그래프를 표시할 수 없습니다.")
