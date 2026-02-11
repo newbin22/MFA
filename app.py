@@ -9,6 +9,25 @@ import plotly.express as px
 # 1. 페이지 설정
 st.set_page_config(page_title="WealthFlow Pro", layout="wide")
 
+# CSS 커스텀: 메트릭 카드를 한 줄로 강제 고정하고 글자 크기 조정
+st.markdown("""
+    <style>
+    [data-testid="stMetricValue"] {
+        font-size: 1.8vw !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 1vw !important;
+        white-space: nowrap !important;
+    }
+    div[data-testid="column"] {
+        width: 25% !important;
+        flex: 1 1 calc(25% - 1rem) !important;
+        min-width: 150px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 # 2. 구글 시트 연결 설정
 def get_gspread_client():
     creds_info = json.loads(st.secrets["connections"]["gsheets"]["service_account"])
@@ -28,11 +47,9 @@ except Exception as e:
 st.sidebar.title("💎 WealthFlow Pro")
 user_input = st.sidebar.text_input("접속 아이디", value="").strip().lower()
 
-# 사용자별 초기 자산 및 저축 목표 설정 (사이드바에서 조정 가능하도록 구성)
 st.sidebar.divider()
 st.sidebar.subheader("⚙️ 자산 설정")
 initial_asset = st.sidebar.number_input("기초 자산 (원)", min_value=0, value=1000000, step=100000)
-savings_goal = st.sidebar.number_input("이번 달 저축 목표 (원)", min_value=0, value=500000, step=50000)
 
 user_mapping = {"newbin": "newbin", "sheet2": "sheet2", "sheet3": "sheet3"}
 
@@ -61,21 +78,20 @@ def load_data(ws_name):
 
 df, worksheet = load_data(target_worksheet_name)
 
-# --- 5. 대시보드 요약 섹션 (최상단) ---
+# --- 5. 대시보드 요약 섹션 (최상단 한 줄 고정) ---
 st.title(f"📊 {user_input.upper()}님 자산 현황")
 
-# 요약 데이터 계산
 total_income = df[df['category'] == '수익']['amount'].sum()
 total_expense = df[df['category'] == '지출']['amount'].sum()
 total_savings = df[df['category'].str.contains('저축', na=False)]['amount'].sum()
 current_balance = initial_asset + total_income - total_expense - total_savings
 
-# 요약 카드 출력
+# 한 줄 배치를 위한 컬럼 생성
 m_col1, m_col2, m_col3, m_col4 = st.columns(4)
 m_col1.metric("현재 잔액", f"{current_balance:,}원")
-m_col2.metric("총 수익", f"{total_income:,}원", delta_color="normal")
-m_col3.metric("총 지출", f"{total_expense:,}원", delta=f"-{total_expense:,}", delta_color="inverse")
-m_col4.metric("총 저축액", f"{total_savings:,}원", delta=f"{total_savings - savings_goal:,} (목표대비)")
+m_col2.metric("총 수익", f"{total_income:,}원")
+m_col3.metric("총 지출", f"{total_expense:,}원")
+m_col4.metric("총 저축액", f"{total_savings:,}원")
 
 st.divider()
 
@@ -102,7 +118,7 @@ with st.expander("➕ 새로운 내역 기록하기", expanded=False):
             st.success("✅ 기록되었습니다!")
             st.rerun()
 
-# 7. 상세 내역 관리 (편집/삭제)
+# 7. 상세 내역 관리
 st.subheader("📑 상세 내역 관리")
 if not df.empty:
     edited_df = st.data_editor(
