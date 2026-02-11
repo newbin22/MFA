@@ -36,7 +36,7 @@ user_mapping = {
 
 if not user_input or user_input not in user_mapping:
     st.title("💰 자산관리 시스템")
-    st.info("왼쪽 사이드바에 등록된 아이디를 입력해주세요. (newbin, sheet2, sheet3)")
+    st.info("왼쪽 사이드바에 등록된 아이디를 입력해주세요.")
     st.stop()
 
 target_worksheet_name = user_mapping[user_input]
@@ -164,3 +164,4 @@ if not df.empty:
             st.plotly_chart(fig_pie, use_container_width=True)
     else:
         st.info("'지출'로 분류된 내역이 없어 분석 그래프를 표시할 수 없습니다.")
+
